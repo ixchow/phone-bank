@@ -41,7 +41,7 @@ bpy.ops.wm.open_mainfile(filepath=infile)
 # xfh0 len < ... > * [transform hierarchy]
 # msh0 len < uint uint uint > [hierarchy point + mesh name]
 # cam0 len < uint params > [heirarchy point + camera params]
-# lig0 len < uint params > [hierarchy point + light params]
+# lmp0 len < uint params > [hierarchy point + light params]
 
 strings_data = b""
 xfh_data = b""

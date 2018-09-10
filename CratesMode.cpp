@@ -34,6 +34,32 @@ Load< Sound::Sample > sample_loop(LoadTagDefault, [](){
 	return new Sound::Sample(data_path("loop.wav"));
 });
 
+Load< MeshBuffer > phone_bank_meshes(LoadTagDefault, [](){
+	return new MeshBuffer(data_path("phone-bank.pnc"));
+});
+
+Load< GLuint > phone_bank_meshes_for_vertex_color_program(LoadTagDefault, [](){
+	return new GLuint(phone_bank_meshes->make_vao_for_program(vertex_color_program->program));
+});
+
+
+Load< Scene > phone_bank_scene(LoadTagDefault, [](){
+	Scene *ret = new Scene();
+	ret->load(data_path("phone-bank.scene"), [](Scene &scene, Scene::Transform *transform, std::string const &mesh_name){
+		Scene::Object *object = scene.new_object(transform);
+		object->program = vertex_color_program->program;
+		object->program_mvp_mat4 = vertex_color_program->object_to_clip_mat4;
+		object->program_mv_mat4x3 = vertex_color_program->object_to_light_mat4x3;
+		object->program_itmv_mat3 = vertex_color_program->normal_to_light_mat3;
+
+		object->vao = *phone_bank_meshes_for_vertex_color_program;
+		MeshBuffer::Mesh const &mesh = phone_bank_meshes->lookup(mesh_name);
+		object->start = mesh.start;
+		object->count = mesh.count;
+	});
+	return ret;
+});
+
 CratesMode::CratesMode() {
 	//----------------
 	//set up scene:
@@ -183,6 +209,8 @@ void CratesMode::draw(glm::uvec2 const &drawable_size) {
 	camera->aspect = drawable_size.x / float(drawable_size.y);
 
 	scene.draw(camera);
+
+	phone_bank_scene->draw(camera); //will this work?
 
 	if (Mode::current.get() == this) {
 		glDisable(GL_DEPTH_TEST);
