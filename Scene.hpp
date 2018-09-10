@@ -8,6 +8,7 @@
 #include <vector>
 #include <list>
 #include <functional>
+#include <string>
 
 //"Scene" manages a hierarchy of transformations with, potentially, attached information.
 struct Scene {

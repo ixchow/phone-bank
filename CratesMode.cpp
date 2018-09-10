@@ -10,6 +10,7 @@
 #include "compile_program.hpp" //helper to compile opengl shader programs
 #include "draw_text.hpp" //helper to... um.. draw text
 #include "vertex_color_program.hpp"
+#include "WalkMesh.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -40,6 +41,14 @@ Load< MeshBuffer > phone_bank_meshes(LoadTagDefault, [](){
 
 Load< GLuint > phone_bank_meshes_for_vertex_color_program(LoadTagDefault, [](){
 	return new GLuint(phone_bank_meshes->make_vao_for_program(vertex_color_program->program));
+});
+
+WalkMesh const *phone_bank_walkmesh = nullptr;
+
+Load< WalkMeshes > phone_bank_walkmeshes(LoadTagDefault, [](){
+	WalkMeshes *ret = new WalkMeshes(data_path("phone-bank.w"));
+	phone_bank_walkmesh = &ret->lookup("WalkMesh");
+	return ret;
 });
 
 
@@ -91,11 +100,13 @@ CratesMode::CratesMode() {
 		small_crate = attach_object(transform2, "Crate");
 	}
 
-	{ //Camera looking at the origin:
+	player.transform = scene.new_transform();
+	player.walk_point = phone_bank_walkmesh->start(player.transform->position);
+
+	{ //Camera is attached to player:
 		Scene::Transform *transform = scene.new_transform();
-		transform->position = glm::vec3(0.0f, -10.0f, 1.0f);
-		//Cameras look along -z, so rotate view to look at origin:
-		transform->rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		transform->set_parent(player.transform);
+		transform->position = glm::vec3(0.0f, 1.6f, 0.0f);
 		camera = scene.new_camera(transform);
 	}
 	
@@ -151,11 +162,19 @@ bool CratesMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_siz
 			float pitch = evt.motion.yrel / float(window_size.y) * camera->fovy;
 			yaw = -yaw;
 			pitch = -pitch;
-			camera->transform->rotation = glm::normalize(
-				camera->transform->rotation
-				* glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::angleAxis(pitch, glm::vec3(1.0f, 0.0f, 0.0f))
+
+			//update camera elevation:
+			const constexpr float PitchLimit = 80.0f / 180.0f * 3.1415926f;
+			player.elevation = glm::clamp(player.elevation + pitch, -PitchLimit, PitchLimit);
+			camera->transform->rotation = glm::angleAxis(pitch, glm::vec3(1.0f, 0.0f, 0.0f));
+
+			//update player forward direction by rotation around 'up' direction:
+			glm::vec3 up = phone_bank_walkmesh->world_normal(player.walk_point);
+			player.transform->rotation = glm::normalize(
+				player.transform->rotation
+				* glm::angleAxis(yaw, up)
 			);
+
 			return true;
 		}
 	}
@@ -163,8 +182,11 @@ bool CratesMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_siz
 }
 
 void CratesMode::update(float elapsed) {
-	glm::mat3 directions = glm::mat3_cast(camera->transform->rotation);
-	float amt = 5.0f * elapsed;
+	{ //walk:
+		glm::mat3 directions = glm::mat3_cast(camera->transform->rotation);
+		float amt = 5.0f * elapsed;
+
+		//<-- I WAS HERE
 	if (controls.right) camera->transform->position += amt * directions[0];
 	if (controls.left) camera->transform->position -= amt * directions[0];
 	if (controls.backward) camera->transform->position += amt * directions[2];

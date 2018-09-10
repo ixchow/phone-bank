@@ -3,6 +3,7 @@
 #include "Mode.hpp"
 
 #include "MeshBuffer.hpp"
+#include "WalkMesh.hpp"
 #include "GL.hpp"
 #include "Scene.hpp"
 #include "Sound.hpp"
@@ -41,6 +42,12 @@ struct CratesMode : public Mode {
 	} controls;
 
 	bool mouse_captured = false;
+
+	struct {
+		Scene::Transform *transform; //player is at transform's position, looking down -z axis.
+		WalkMesh::WalkPoint walk_point;
+		float elevation = 0.0f; //in radians
+	} player;
 
 	Scene scene;
 	Scene::Camera *camera = nullptr;

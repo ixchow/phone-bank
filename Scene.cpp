@@ -291,7 +291,6 @@ void Scene::load(std::string const &filename,
 		t->position = h.position;
 		t->rotation = h.rotation;
 		t->scale = h.scale;
-		std::cout << "Loaded " << t->name << "." << std::endl; //DEBUG
 
 		hierarchy_transforms.emplace_back(t);
 	}
