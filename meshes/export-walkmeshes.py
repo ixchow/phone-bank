@@ -95,30 +95,36 @@ for obj in bpy.data.objects:
 
 
 	#Helper to write referenced vertices:
-	vertex_refs = dict() #for each referenced vertex, store packed reference
-	vertex_normals = dict() #for each referenced vertex, store list of normals
+	vertex_inds = dict() #for each referenced vertex, store new index
+	vertex_normals = [] #for each referenced vertex, store list of normals
 	def write_vertex(index, normal):
 		global positions, position_count, vertex_refs, vertex_normals
-		if index not in vertex_refs:
-			vertex_refs[index] = struct.pack('I', len(vertex_refs))
-			vertex_normals[index] = []
+		if index not in vertex_inds:
+			vertex_inds[index] = len(vertex_inds)
+			vertex_normals.append([])
 			positions += struct.pack('fff', *mesh.vertices[index].co)
 			position_count += 1
-		vertex_normals[index].append(normal)
-		return vertex_refs[index]
+		vertex_normals[vertex_inds[index]].append(normal)
+		return struct.pack('I', vertex_begin + vertex_inds[index])
 
 	#write the mesh triangles:
 	for poly in mesh.polygons:
 		assert(len(poly.loop_indices) == 3)
+
+		#check that faces are CCW-oriented:
+		ab =  mesh.vertices[poly.vertices[1]].co - mesh.vertices[poly.vertices[0]].co
+		ac =  mesh.vertices[poly.vertices[2]].co - mesh.vertices[poly.vertices[0]].co
+		out = ab.cross(ac).normalized()
+		d = poly.normal.dot(out)
+		assert(d > 0.9)
+
 		for i in range(0,3):
 			assert(mesh.loops[poly.loop_indices[i]].vertex_index == poly.vertices[i])
 			triangles += write_vertex(poly.vertices[i], mesh.loops[poly.loop_indices[i]].normal)
 		triangle_count += 1
 	
 	#write (and possibly average) the normals:
-	for i in range(0, len(vertex_normals)):
-		assert(i in vertex_normals)
-		ns = vertex_normals[i]
+	for ns in vertex_normals:
 		avg = None
 		for n in ns:
 			if avg == None: avg = n
@@ -136,7 +142,7 @@ for obj in bpy.data.objects:
 	vertex_end = position_count
 	triangle_end = triangle_count
 
-	assert(vertex_end - vertex_begin == len(vertex_refs))
+	assert(vertex_end - vertex_begin == len(vertex_inds))
 
 	#record mesh name, vertex range, and triangle range:
 	name_begin = len(strings)

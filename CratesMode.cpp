@@ -71,51 +71,24 @@ Load< Scene > phone_bank_scene(LoadTagDefault, [](){
 
 CratesMode::CratesMode() {
 	//----------------
-	//set up scene:
-	//TODO: this should load the scene from a file!
+	//set up scene that holds player + camera (all other objects are in the loaded scene):
 
-	auto attach_object = [this](Scene::Transform *transform, std::string const &name) {
-		Scene::Object *object = scene.new_object(transform);
-		object->program = vertex_color_program->program;
-		object->program_mvp_mat4 = vertex_color_program->object_to_clip_mat4;
-		object->program_mv_mat4x3 = vertex_color_program->object_to_light_mat4x3;
-		object->program_itmv_mat3 = vertex_color_program->normal_to_light_mat3;
-		object->vao = *crates_meshes_for_vertex_color_program;
-		MeshBuffer::Mesh const &mesh = crates_meshes->lookup(name);
-		object->start = mesh.start;
-		object->count = mesh.count;
-		return object;
-	};
-
-	{ //build some sort of content:
-		//Crate at the origin:
-		Scene::Transform *transform1 = scene.new_transform();
-		transform1->position = glm::vec3(1.0f, 0.0f, 0.0f);
-		large_crate = attach_object(transform1, "Crate");
-		//smaller crate on top:
-		Scene::Transform *transform2 = scene.new_transform();
-		transform2->set_parent(transform1);
-		transform2->position = glm::vec3(0.0f, 0.0f, 1.5f);
-		transform2->scale = glm::vec3(0.5f);
-		small_crate = attach_object(transform2, "Crate");
-	}
-
+	//player starts at origin:
 	player.transform = scene.new_transform();
-	player.walk_point = phone_bank_walkmesh->start(player.transform->position);
+	player.walkpoint = phone_bank_walkmesh->start(player.transform->position);
 
 	{ //Camera is attached to player:
 		Scene::Transform *transform = scene.new_transform();
 		transform->set_parent(player.transform);
-		transform->position = glm::vec3(0.0f, 1.6f, 0.0f);
+		transform->position = glm::vec3(0.0f, 0.0f, 1.6f); //1.6 units above the groundS
+		transform->rotation = glm::angleAxis(0.5f * 3.14159f, glm::vec3(1.0f, 0.0f, 0.0f)); //rotate -z axis up to point along y axis
 		camera = scene.new_camera(transform);
 	}
-	
-	//start the 'loop' sample playing at the large crate:
-	loop = sample_loop->play(large_crate->transform->position, 1.0f, Sound::Loop);
+
+	//TODO: look up phones
 }
 
 CratesMode::~CratesMode() {
-	if (loop) loop->stop();
 }
 
 bool CratesMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
@@ -164,15 +137,15 @@ bool CratesMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_siz
 			pitch = -pitch;
 
 			//update camera elevation:
-			const constexpr float PitchLimit = 80.0f / 180.0f * 3.1415926f;
+			const constexpr float PitchLimit = 90.0f / 180.0f * 3.1415926f;
 			player.elevation = glm::clamp(player.elevation + pitch, -PitchLimit, PitchLimit);
-			camera->transform->rotation = glm::angleAxis(pitch, glm::vec3(1.0f, 0.0f, 0.0f));
+			camera->transform->rotation = glm::angleAxis(player.elevation + 0.5f * 3.1515926f, glm::vec3(1.0f, 0.0f, 0.0f));
 
 			//update player forward direction by rotation around 'up' direction:
-			glm::vec3 up = phone_bank_walkmesh->world_normal(player.walk_point);
+			glm::vec3 up = phone_bank_walkmesh->world_normal(player.walkpoint);
 			player.transform->rotation = glm::normalize(
-				player.transform->rotation
-				* glm::angleAxis(yaw, up)
+				glm::angleAxis(yaw, up)
+				* player.transform->rotation
 			);
 
 			return true;
@@ -183,32 +156,49 @@ bool CratesMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_siz
 
 void CratesMode::update(float elapsed) {
 	{ //walk:
-		glm::mat3 directions = glm::mat3_cast(camera->transform->rotation);
+		glm::mat3 directions = glm::mat3_cast(player.transform->rotation);
 		float amt = 5.0f * elapsed;
+		glm::vec3 step = glm::vec3(0.0f);
+		if (controls.left) step -= amt * directions[0];
+		if (controls.right) step += amt * directions[0];
+		if (controls.backward) step -= amt * directions[1];
+		if (controls.forward) step += amt * directions[1];
 
-		//<-- I WAS HERE
-	if (controls.right) camera->transform->position += amt * directions[0];
-	if (controls.left) camera->transform->position -= amt * directions[0];
-	if (controls.backward) camera->transform->position += amt * directions[2];
-	if (controls.forward) camera->transform->position -= amt * directions[2];
+		phone_bank_walkmesh->walk(player.walkpoint, step);
+
+		//update position from walkmesh:
+		player.transform->position = phone_bank_walkmesh->world_point(player.walkpoint);
+
+		{ //update rotation from walkmesh:
+			glm::vec3 old_up = directions[2];
+			glm::vec3 new_up = phone_bank_walkmesh->world_normal(player.walkpoint);
+
+			//shortest-arc rotation that takes old_up to new_up:
+			//see: https://stackoverflow.com/questions/1171849/finding-quaternion-representing-the-rotation-from-one-vector-to-another
+			glm::vec3 xyz = glm::cross(old_up, new_up);
+			float w = 1.0f + glm::dot(old_up, new_up);
+			glm::quat rot = glm::normalize(glm::quat(w, xyz));
+
+			//apply rotation to 'right' direction:
+			glm::vec3 new_right = rot * directions[0];
+
+			//compute forward from up and right:
+			glm::vec3 new_forward = glm::cross(new_up, new_right);
+
+			//convert back into quaternion for storage in player transform:
+			player.transform->rotation = glm::normalize(glm::quat_cast(glm::mat3(
+				new_right,
+				new_forward,
+				new_up
+			)));
+		}
+	}
 
 	{ //set sound positions:
 		glm::mat4 cam_to_world = camera->transform->make_local_to_world();
 		Sound::listener.set_position( cam_to_world[3] );
 		//camera looks down -z, so right is +x:
 		Sound::listener.set_right( glm::normalize(cam_to_world[0]) );
-
-		if (loop) {
-			glm::mat4 large_crate_to_world = large_crate->transform->make_local_to_world();
-			loop->set_position( large_crate_to_world * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f) );
-		}
-	}
-
-	dot_countdown -= elapsed;
-	if (dot_countdown <= 0.0f) {
-		dot_countdown = (rand() / float(RAND_MAX) * 2.0f) + 0.5f;
-		glm::mat4x3 small_crate_to_world = small_crate->transform->make_local_to_world();
-		sample_dot->play( small_crate_to_world * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f) );
 	}
 }
 

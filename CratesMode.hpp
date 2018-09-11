@@ -44,20 +44,11 @@ struct CratesMode : public Mode {
 	bool mouse_captured = false;
 
 	struct {
-		Scene::Transform *transform; //player is at transform's position, looking down -z axis.
-		WalkMesh::WalkPoint walk_point;
-		float elevation = 0.0f; //in radians
+		Scene::Transform *transform; //player is at transform's position, looking down y axis with x to the right and z up.
+		WalkMesh::WalkPoint walkpoint;
+		float elevation = 0.0f; //up/down angle of camera (in radians)
 	} player;
 
 	Scene scene;
 	Scene::Camera *camera = nullptr;
-
-	Scene::Object *large_crate = nullptr;
-	Scene::Object *small_crate = nullptr;
-
-	//when this reaches zero, the 'dot' sample is triggered at the small crate:
-	float dot_countdown = 1.0f;
-
-	//this 'loop' sample is played at the large crate:
-	std::shared_ptr< Sound::PlayingSample > loop;
 };
