@@ -57,14 +57,13 @@ if $(OS) = NT { #Windows
 #Store the names of all the .cpp files to build into a variable:
 NAMES =
 	WalkMesh
-	CratesMode
+	GameMode
 	main
 	data_path
 	compile_program
 	vertex_color_program
 	Scene
 	Mode
-	GameMode
 	MenuMode
 	Load
 	MeshBuffer

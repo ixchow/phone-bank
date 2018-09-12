@@ -17,8 +17,9 @@ Load< MeshBuffer > text_meshes(LoadTagInit, [](){
 const constexpr float char_height = 3.0f;
 
 inline float char_width(char a) {
-	if (a == 'I') return 1.0f;
+	if (a == 'I' || a == ';' || a == ':' || a == ',' || a == '.' || a == '`' || a == '\'') return 1.0f;
 	else if (a == 'L') return 2.0f;
+	else if ('0' <= a && a <= '9') return 2.5f;
 	else if (a == 'M' || a == 'W') return 4.0f;
 	else return 3.0f;
 };

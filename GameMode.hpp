@@ -3,15 +3,16 @@
 #include "Mode.hpp"
 
 #include "MeshBuffer.hpp"
+#include "WalkMesh.hpp"
 #include "GL.hpp"
+#include "Scene.hpp"
+#include "Sound.hpp"
 
 #include <SDL.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <vector>
-
-// The 'GameMode' mode is the main gameplay mode:
 
 struct GameMode : public Mode {
 	GameMode();
@@ -31,19 +32,28 @@ struct GameMode : public Mode {
 	//starts up a 'quit/resume' pause menu:
 	void show_pause_menu();
 
-	//------- game state -------
-
-	glm::uvec2 board_size = glm::uvec2(5,4);
-	std::vector< MeshBuffer::Mesh const * > board_meshes;
-	std::vector< glm::quat > board_rotations;
-
-	glm::uvec2 cursor = glm::vec2(0,0);
-
 	struct {
-		bool roll_left = false;
-		bool roll_right = false;
-		bool roll_up = false;
-		bool roll_down = false;
+		bool forward = false;
+		bool backward = false;
+		bool left = false;
+		bool right = false;
 	} controls;
 
+	bool mouse_captured = false;
+
+	struct {
+		Scene::Transform *transform; //player is at transform's position, looking down y axis with x to the right and z up.
+		WalkMesh::WalkPoint walkpoint;
+		float elevation = 0.0f; //up/down angle of camera (in radians)
+	} player;
+
+	struct Phone {
+		Scene::Object *object = nullptr;
+	};
+
+	std::vector< Phone > phones;
+	Phone *close_phone = nullptr;
+
+	Scene scene;
+	Scene::Camera *camera = nullptr;
 };

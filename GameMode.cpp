@@ -1,8 +1,8 @@
 #include "GameMode.hpp"
-#include "CratesMode.hpp"
 
 #include "MenuMode.hpp"
 #include "Load.hpp"
+#include "Sound.hpp"
 #include "MeshBuffer.hpp"
 #include "gl_errors.hpp" //helper for dumpping OpenGL error messages
 #include "read_chunk.hpp" //helper for reading a vector of structures from a file
@@ -10,6 +10,7 @@
 #include "compile_program.hpp" //helper to compile opengl shader programs
 #include "draw_text.hpp" //helper to... um.. draw text
 #include "vertex_color_program.hpp"
+#include "WalkMesh.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -19,42 +20,80 @@
 #include <cstddef>
 #include <random>
 
+Load< MeshBuffer > crates_meshes(LoadTagDefault, [](){
+	return new MeshBuffer(data_path("crates.pnc"));
+});
 
-MeshBuffer::Mesh tile_mesh;
-MeshBuffer::Mesh cursor_mesh;
-MeshBuffer::Mesh doll_mesh;
-MeshBuffer::Mesh egg_mesh;
-MeshBuffer::Mesh cube_mesh;
+Load< GLuint > crates_meshes_for_vertex_color_program(LoadTagDefault, [](){
+	return new GLuint(crates_meshes->make_vao_for_program(vertex_color_program->program));
+});
 
-Load< MeshBuffer > meshes(LoadTagDefault, [](){
-	MeshBuffer const *ret = new MeshBuffer(data_path("meshes.pnc"));
+Load< Sound::Sample > sample_dot(LoadTagDefault, [](){
+	return new Sound::Sample(data_path("dot.wav"));
+});
+Load< Sound::Sample > sample_loop(LoadTagDefault, [](){
+	return new Sound::Sample(data_path("loop.wav"));
+});
 
-	tile_mesh = ret->lookup("Tile");
-	cursor_mesh = ret->lookup("Cursor");
-	doll_mesh = ret->lookup("Doll");
-	egg_mesh = ret->lookup("Egg");
-	cube_mesh = ret->lookup("Cube");
+Load< MeshBuffer > phone_bank_meshes(LoadTagDefault, [](){
+	return new MeshBuffer(data_path("phone-bank.pnc"));
+});
 
+Load< GLuint > phone_bank_meshes_for_vertex_color_program(LoadTagDefault, [](){
+	return new GLuint(phone_bank_meshes->make_vao_for_program(vertex_color_program->program));
+});
+
+WalkMesh const *phone_bank_walkmesh = nullptr;
+
+Load< WalkMeshes > phone_bank_walkmeshes(LoadTagDefault, [](){
+	WalkMeshes *ret = new WalkMeshes(data_path("phone-bank.w"));
+	phone_bank_walkmesh = &ret->lookup("WalkMesh");
 	return ret;
 });
 
-Load< GLuint > meshes_for_vertex_color_program(LoadTagDefault, [](){
-	return new GLuint(meshes->make_vao_for_program(vertex_color_program->program));
-});
+std::vector< Scene::Object * > phone_bank_scene_phones;
 
+Load< Scene > phone_bank_scene(LoadTagDefault, [](){
+	Scene *ret = new Scene();
+	ret->load(data_path("phone-bank.scene"), [](Scene &scene, Scene::Transform *transform, std::string const &mesh_name){
+		Scene::Object *object = scene.new_object(transform);
+		object->program = vertex_color_program->program;
+		object->program_mvp_mat4 = vertex_color_program->object_to_clip_mat4;
+		object->program_mv_mat4x3 = vertex_color_program->object_to_light_mat4x3;
+		object->program_itmv_mat3 = vertex_color_program->normal_to_light_mat3;
+
+		object->vao = *phone_bank_meshes_for_vertex_color_program;
+		MeshBuffer::Mesh const &mesh = phone_bank_meshes->lookup(mesh_name);
+		object->start = mesh.start;
+		object->count = mesh.count;
+
+		if (transform->name.substr(0, 5) == "Phone") {
+			phone_bank_scene_phones.emplace_back(object);
+		}
+	});
+	std::cout << "Scene has " << phone_bank_scene_phones.size() << " phones." << std::endl;
+	return ret;
+});
 
 GameMode::GameMode() {
 	//----------------
-	//set up game board with meshes and rolls:
-	board_meshes.reserve(board_size.x * board_size.y);
-	board_rotations.reserve(board_size.x * board_size.y);
-	std::mt19937 mt(0xbead1234);
+	//set up scene that holds player + camera (all other objects are in the loaded scene):
 
-	std::vector< MeshBuffer::Mesh const * > meshes{ &doll_mesh, &egg_mesh, &cube_mesh };
+	//player starts at origin:
+	player.transform = scene.new_transform();
+	player.walkpoint = phone_bank_walkmesh->start(player.transform->position);
 
-	for (uint32_t i = 0; i < board_size.x * board_size.y; ++i) {
-		board_meshes.emplace_back(meshes[mt()%meshes.size()]);
-		board_rotations.emplace_back(glm::quat());
+	{ //Camera is attached to player:
+		Scene::Transform *transform = scene.new_transform();
+		transform->set_parent(player.transform);
+		transform->position = glm::vec3(0.0f, 0.0f, 1.6f); //1.6 units above the groundS
+		transform->rotation = glm::angleAxis(0.5f * 3.14159f, glm::vec3(1.0f, 0.0f, 0.0f)); //rotate -z axis up to point along y axis
+		camera = scene.new_camera(transform);
+	}
+
+	for (auto object : phone_bank_scene_phones) {
+		phones.emplace_back();
+		phones.back().object = object;
 	}
 }
 
@@ -66,81 +105,121 @@ bool GameMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 	if (evt.type == SDL_KEYDOWN && evt.key.repeat) {
 		return false;
 	}
-	//handle tracking the state of WSAD for roll control:
+	//handle tracking the state of WSAD for movement control:
 	if (evt.type == SDL_KEYDOWN || evt.type == SDL_KEYUP) {
 		if (evt.key.keysym.scancode == SDL_SCANCODE_W) {
-			controls.roll_up = (evt.type == SDL_KEYDOWN);
+			controls.forward = (evt.type == SDL_KEYDOWN);
 			return true;
 		} else if (evt.key.keysym.scancode == SDL_SCANCODE_S) {
-			controls.roll_down = (evt.type == SDL_KEYDOWN);
+			controls.backward = (evt.type == SDL_KEYDOWN);
 			return true;
 		} else if (evt.key.keysym.scancode == SDL_SCANCODE_A) {
-			controls.roll_left = (evt.type == SDL_KEYDOWN);
+			controls.left = (evt.type == SDL_KEYDOWN);
 			return true;
 		} else if (evt.key.keysym.scancode == SDL_SCANCODE_D) {
-			controls.roll_right = (evt.type == SDL_KEYDOWN);
+			controls.right = (evt.type == SDL_KEYDOWN);
 			return true;
 		}
 	}
-	//move cursor on L/R/U/D press:
-	if (evt.type == SDL_KEYDOWN && evt.key.repeat == 0) {
-		if (evt.key.keysym.scancode == SDL_SCANCODE_LEFT) {
-			if (cursor.x > 0) {
-				cursor.x -= 1;
-			}
-			return true;
-		} else if (evt.key.keysym.scancode == SDL_SCANCODE_RIGHT) {
-			if (cursor.x + 1 < board_size.x) {
-				cursor.x += 1;
-			}
-			return true;
-		} else if (evt.key.keysym.scancode == SDL_SCANCODE_UP) {
-			if (cursor.y + 1 < board_size.y) {
-				cursor.y += 1;
-			}
-			return true;
-		} else if (evt.key.keysym.scancode == SDL_SCANCODE_DOWN) {
-			if (cursor.y > 0) {
-				cursor.y -= 1;
-			}
-			return true;
-		} else if (evt.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
-			//open pause menu on 'ESCAPE':
-			show_pause_menu();
+	//handle tracking the mouse for rotation control:
+	if (!mouse_captured) {
+		if (evt.type == SDL_KEYDOWN && evt.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+			Mode::set_current(nullptr);
 			return true;
 		}
-	}
+		if (evt.type == SDL_MOUSEBUTTONDOWN) {
+			SDL_SetRelativeMouseMode(SDL_TRUE);
+			mouse_captured = true;
+			return true;
+		}
+	} else if (mouse_captured) {
+		if (evt.type == SDL_KEYDOWN && evt.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+			SDL_SetRelativeMouseMode(SDL_FALSE);
+			mouse_captured = false;
+			return true;
+		}
+		if (evt.type == SDL_MOUSEMOTION) {
+			//Note: float(window_size.y) * camera->fovy is a pixels-to-radians conversion factor
+			float yaw = evt.motion.xrel / float(window_size.y) * camera->fovy;
+			float pitch = evt.motion.yrel / float(window_size.y) * camera->fovy;
+			yaw = -yaw;
+			pitch = -pitch;
 
+			//update camera elevation:
+			const constexpr float PitchLimit = 90.0f / 180.0f * 3.1415926f;
+			player.elevation = glm::clamp(player.elevation + pitch, -PitchLimit, PitchLimit);
+			camera->transform->rotation = glm::angleAxis(player.elevation + 0.5f * 3.1515926f, glm::vec3(1.0f, 0.0f, 0.0f));
+
+			//update player forward direction by rotation around 'up' direction:
+			glm::vec3 up = phone_bank_walkmesh->world_normal(player.walkpoint);
+			player.transform->rotation = glm::normalize(
+				glm::angleAxis(yaw, up)
+				* player.transform->rotation
+			);
+
+			return true;
+		}
+	}
 	return false;
 }
 
 void GameMode::update(float elapsed) {
-	//if the roll keys are pressed, rotate everything on the same row or column as the cursor:
-	glm::quat dr = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-	float amt = elapsed * 1.0f;
-	if (controls.roll_left) {
-		dr = glm::angleAxis(amt, glm::vec3(0.0f, 1.0f, 0.0f)) * dr;
-	}
-	if (controls.roll_right) {
-		dr = glm::angleAxis(-amt, glm::vec3(0.0f, 1.0f, 0.0f)) * dr;
-	}
-	if (controls.roll_up) {
-		dr = glm::angleAxis(amt, glm::vec3(1.0f, 0.0f, 0.0f)) * dr;
-	}
-	if (controls.roll_down) {
-		dr = glm::angleAxis(-amt, glm::vec3(1.0f, 0.0f, 0.0f)) * dr;
-	}
-	if (dr != glm::quat()) {
-		for (uint32_t x = 0; x < board_size.x; ++x) {
-			glm::quat &r = board_rotations[cursor.y * board_size.x + x];
-			r = glm::normalize(dr * r);
+	{ //walk:
+		glm::mat3 directions = glm::mat3_cast(player.transform->rotation);
+		float amt = 5.0f * elapsed;
+		glm::vec3 step = glm::vec3(0.0f);
+		if (controls.left) step -= amt * directions[0];
+		if (controls.right) step += amt * directions[0];
+		if (controls.backward) step -= amt * directions[1];
+		if (controls.forward) step += amt * directions[1];
+
+		phone_bank_walkmesh->walk(player.walkpoint, step);
+
+		//update position from walkmesh:
+		player.transform->position = phone_bank_walkmesh->world_point(player.walkpoint);
+
+		{ //update rotation from walkmesh:
+			glm::vec3 old_up = directions[2];
+			glm::vec3 new_up = phone_bank_walkmesh->world_normal(player.walkpoint);
+
+			//shortest-arc rotation that takes old_up to new_up:
+			//see: https://stackoverflow.com/questions/1171849/finding-quaternion-representing-the-rotation-from-one-vector-to-another
+			glm::vec3 xyz = glm::cross(old_up, new_up);
+			float w = 1.0f + glm::dot(old_up, new_up);
+			glm::quat rot = glm::normalize(glm::quat(w, xyz));
+
+			//apply rotation to 'right' direction:
+			glm::vec3 new_right = rot * directions[0];
+
+			//compute forward from up and right:
+			glm::vec3 new_forward = glm::cross(new_up, new_right);
+
+			//convert back into quaternion for storage in player transform:
+			player.transform->rotation = glm::normalize(glm::quat_cast(glm::mat3(
+				new_right,
+				new_forward,
+				new_up
+			)));
 		}
-		for (uint32_t y = 0; y < board_size.y; ++y) {
-			if (y != cursor.y) {
-				glm::quat &r = board_rotations[y * board_size.x + cursor.x];
-				r = glm::normalize(dr * r);
+	}
+
+	{ //update which phone is interactable (if any):
+		close_phone = nullptr;
+		glm::vec3 at = glm::vec3(camera->transform->make_local_to_world()[3]);
+		glm::vec3 forward = -glm::vec3(camera->transform->make_local_to_world()[2]);
+		for (auto &phone : phones) {
+			glm::vec3 phone_at = glm::vec3(phone.object->transform->make_local_to_world()[3]);
+			if (glm::length(phone_at - at) < 2.0f && glm::dot(phone_at - at, forward) > 0.2f) {
+				close_phone = &phone;
 			}
 		}
+	}
+
+	{ //set sound positions:
+		glm::mat4 cam_to_world = camera->transform->make_local_to_world();
+		Sound::listener.set_position( cam_to_world[3] );
+		//camera looks down -z, so right is +x:
+		Sound::listener.set_right( glm::normalize(cam_to_world[0]) );
 	}
 }
 
@@ -151,95 +230,43 @@ void GameMode::draw(glm::uvec2 const &drawable_size) {
 	glBlendEquation(GL_FUNC_ADD);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	//Set up a transformation matrix to fit the board in the window:
-	glm::mat4 world_to_clip;
-	{
-		float aspect = float(drawable_size.x) / float(drawable_size.y);
-
-		//want scale such that board * scale fits in [-aspect,aspect]x[-1.0,1.0] screen box:
-		float scale = glm::min(
-			2.0f * aspect / float(board_size.x),
-			2.0f / float(board_size.y)
-		);
-
-		//center of board will be placed at center of screen:
-		glm::vec2 center = 0.5f * glm::vec2(board_size);
-
-		//NOTE: glm matrices are specified in column-major order
-		world_to_clip = glm::mat4(
-			scale / aspect, 0.0f, 0.0f, 0.0f,
-			0.0f, scale, 0.0f, 0.0f,
-			0.0f, 0.0f,-1.0f, 0.0f,
-			-(scale / aspect) * center.x, -scale * center.y, 0.0f, 1.0f
-		);
-	}
-
-	//set up graphics pipeline to use data from the meshes and the simple shading program:
-	glBindVertexArray(*meshes_for_vertex_color_program);
+	//set up light position + color:
 	glUseProgram(vertex_color_program->program);
-
 	glUniform3fv(vertex_color_program->sun_color_vec3, 1, glm::value_ptr(glm::vec3(0.81f, 0.81f, 0.76f)));
 	glUniform3fv(vertex_color_program->sun_direction_vec3, 1, glm::value_ptr(glm::normalize(glm::vec3(-0.2f, 0.2f, 1.0f))));
-	glUniform3fv(vertex_color_program->sky_color_vec3, 1, glm::value_ptr(glm::vec3(0.2f, 0.2f, 0.3f)));
+	glUniform3fv(vertex_color_program->sky_color_vec3, 1, glm::value_ptr(glm::vec3(0.4f, 0.4f, 0.45f)));
 	glUniform3fv(vertex_color_program->sky_direction_vec3, 1, glm::value_ptr(glm::vec3(0.0f, 1.0f, 0.0f)));
+	glUseProgram(0);
 
-	//helper function to draw a given mesh with a given transformation:
-	auto draw_mesh = [&](MeshBuffer::Mesh const &mesh, glm::mat4 const &object_to_world) {
-		//set up the matrix uniforms:
-		if (vertex_color_program->object_to_clip_mat4 != -1U) {
-			glm::mat4 object_to_clip = world_to_clip * object_to_world;
-			glUniformMatrix4fv(vertex_color_program->object_to_clip_mat4, 1, GL_FALSE, glm::value_ptr(object_to_clip));
-		}
-		if (vertex_color_program->object_to_light_mat4x3 != -1U) {
-			glUniformMatrix4x3fv(vertex_color_program->object_to_light_mat4x3, 1, GL_FALSE, glm::value_ptr(object_to_world));
-		}
-		if (vertex_color_program->normal_to_light_mat3 != -1U) {
-			//NOTE: if there isn't any non-uniform scaling in the object_to_world matrix, then the inverse transpose is the matrix itself, and computing it wastes some CPU time:
-			glm::mat3 normal_to_world = glm::inverse(glm::transpose(glm::mat3(object_to_world)));
-			glUniformMatrix3fv(vertex_color_program->normal_to_light_mat3, 1, GL_FALSE, glm::value_ptr(normal_to_world));
-		}
+	//fix aspect ratio of camera
+	camera->aspect = drawable_size.x / float(drawable_size.y);
 
-		//draw the mesh:
-		glDrawArrays(GL_TRIANGLES, mesh.start, mesh.count);
-	};
+	scene.draw(camera);
 
-	for (uint32_t y = 0; y < board_size.y; ++y) {
-		for (uint32_t x = 0; x < board_size.x; ++x) {
-			draw_mesh(tile_mesh,
-				glm::mat4(
-					1.0f, 0.0f, 0.0f, 0.0f,
-					0.0f, 1.0f, 0.0f, 0.0f,
-					0.0f, 0.0f, 1.0f, 0.0f,
-					x+0.5f, y+0.5f,-0.5f, 1.0f
-				)
-			);
-			draw_mesh(*board_meshes[y*board_size.x+x],
-				glm::mat4(
-					1.0f, 0.0f, 0.0f, 0.0f,
-					0.0f, 1.0f, 0.0f, 0.0f,
-					0.0f, 0.0f, 1.0f, 0.0f,
-					x+0.5f, y+0.5f, 0.0f, 1.0f
-				)
-				* glm::mat4_cast(board_rotations[y*board_size.x+x])
-			);
-		}
-	}
-	draw_mesh(cursor_mesh,
-		glm::mat4(
-			1.0f, 0.0f, 0.0f, 0.0f,
-			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, 0.0f,
-			cursor.x+0.5f, cursor.y+0.5f, 0.0f, 1.0f
-		)
-	);
+	phone_bank_scene->draw(camera); //will this work?
 
 	if (Mode::current.get() == this) {
 		glDisable(GL_DEPTH_TEST);
-		std::string message = "PRESS ESC FOR MENU";
-		float height = 0.06f;
-		float width = text_width(message, height);
-		draw_text(message, glm::vec2(-0.5f * width,-0.99f), height, glm::vec4(0.0f, 0.0f, 0.0f, 0.5f));
-		draw_text(message, glm::vec2(-0.5f * width,-1.0f), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+		{ //mouse captured message:
+			std::string message;
+			if (mouse_captured) {
+				message = "ESCAPE TO UNGRAB MOUSE * WASD MOVE";
+			} else {
+				message = "CLICK TO GRAB MOUSE * ESCAPE QUIT";
+			}
+			float height = 0.06f;
+			float width = text_width(message, height);
+			draw_text(message, glm::vec2(-0.5f * width,-0.99f), height, glm::vec4(0.0f, 0.0f, 0.0f, 0.5f));
+			draw_text(message, glm::vec2(-0.5f * width,-1.0f), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+		}
+		if (close_phone) { //phone interaction message:
+			std::string message;
+			message = "PHONE:;`'., " + close_phone->object->transform->name;
+			float height = 0.06f;
+			float width = text_width(message, height);
+			draw_text(message, glm::vec2(-0.5f * width,-0.5f * height - 0.01f), height, glm::vec4(0.0f, 0.0f, 0.0f, 0.5f));
+			draw_text(message, glm::vec2(-0.5f * width,-0.5f * height), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+		}
 
 		glUseProgram(0);
 	}
@@ -257,9 +284,6 @@ void GameMode::show_pause_menu() {
 	menu->choices.emplace_back("PAUSED");
 	menu->choices.emplace_back("RESUME", [game](){
 		Mode::set_current(game);
-	});
-	menu->choices.emplace_back("CRATES", [game](){
-		Mode::set_current(std::make_shared< CratesMode >());
 	});
 	menu->choices.emplace_back("QUIT", [](){
 		Mode::set_current(nullptr);
