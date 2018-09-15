@@ -20,14 +20,6 @@
 #include <cstddef>
 #include <random>
 
-Load< MeshBuffer > crates_meshes(LoadTagDefault, [](){
-	return new MeshBuffer(data_path("crates.pnc"));
-});
-
-Load< GLuint > crates_meshes_for_vertex_color_program(LoadTagDefault, [](){
-	return new GLuint(crates_meshes->make_vao_for_program(vertex_color_program->program));
-});
-
 Load< Sound::Sample > sample_dot(LoadTagDefault, [](){
 	return new Sound::Sample(data_path("dot.wav"));
 });
@@ -164,6 +156,21 @@ bool GameMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 }
 
 void GameMode::update(float elapsed) {
+	static std::mt19937 mt(0x91827364);
+
+	//task spawning:
+	task_timer -= elapsed;
+	if (task_timer <= 0.0f) {
+		//launch a new task:
+		Phone &p = phones[mt() % phones.size()];
+		if (p.ring_time >= 0.0f) {
+			p.ring_time = 7.0f + mt() / float(mt.max()) * 3.0f;
+		}
+
+		//reset spawn time:
+		task_timer += 10.0f + mt() / float(mt.max()) * 5.0f;
+	}
+
 	{ //walk:
 		glm::mat3 directions = glm::mat3_cast(player.transform->rotation);
 		float amt = 5.0f * elapsed;
@@ -221,6 +228,24 @@ void GameMode::update(float elapsed) {
 		//camera looks down -z, so right is +x:
 		Sound::listener.set_right( glm::normalize(cam_to_world[0]) );
 	}
+
+	//set ring positions / stop rings:
+	for (auto &p : phones) {
+		if (p.ring_time > 0.0f) {
+			if (!p.ring_loop) {
+				p.ring_loop = sample_dot->play(p.object->transform->make_local_to_world()[3], 1.0f, Sound::Loop);
+			}
+			p.ring_time -= elapsed;
+			if (p.ring_time <= 0.0f) {
+				if (p.ring_loop) {
+					p.ring_loop->stop();
+					p.ring_loop.reset();
+				}
+				p.ring_time = 0.0f;
+				//TODO: add demerit
+			}
+		}
+	}
 }
 
 void GameMode::draw(glm::uvec2 const &drawable_size) {
@@ -260,12 +285,23 @@ void GameMode::draw(glm::uvec2 const &drawable_size) {
 			draw_text(message, glm::vec2(-0.5f * width,-1.0f), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
 		}
 		if (close_phone) { //phone interaction message:
-			std::string message;
-			message = "PHONE:;`'., " + close_phone->object->transform->name;
-			float height = 0.06f;
-			float width = text_width(message, height);
-			draw_text(message, glm::vec2(-0.5f * width,-0.5f * height - 0.01f), height, glm::vec4(0.0f, 0.0f, 0.0f, 0.5f));
-			draw_text(message, glm::vec2(-0.5f * width,-0.5f * height), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+			{
+				std::string message;
+				message = "CLICK FOR";
+				float height = 0.06f;
+				float width = text_width(message, height);
+				draw_text(message, glm::vec2(-0.5f * width, -0.01f), height, glm::vec4(0.0f, 0.0f, 0.0f, 0.5f));
+				draw_text(message, glm::vec2(-0.5f * width, 0.0f), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+			}
+
+			{
+				std::string message;
+				message = close_phone->object->transform->name.substr(6) + " PHONE";
+				float height = 0.06f;
+				float width = text_width(message, height);
+				draw_text(message, glm::vec2(-0.5f * width,-height - 0.01f), height, glm::vec4(0.0f, 0.0f, 0.0f, 0.5f));
+				draw_text(message, glm::vec2(-0.5f * width,-height), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+			}
 		}
 
 		glUseProgram(0);

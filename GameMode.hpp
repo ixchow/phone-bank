@@ -49,6 +49,8 @@ struct GameMode : public Mode {
 
 	struct Phone {
 		Scene::Object *object = nullptr;
+		float ring_time = 0.0f;
+		std::shared_ptr< Sound::PlayingSample > ring_loop;
 	};
 
 	std::vector< Phone > phones;
@@ -56,4 +58,6 @@ struct GameMode : public Mode {
 
 	Scene scene;
 	Scene::Camera *camera = nullptr;
+
+	float task_timer = 5.0f;
 };
