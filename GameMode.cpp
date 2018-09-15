@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <random>
 #include <algorithm>
+#include <chrono>
 
 Load< Sound::Sample > sample_dot(LoadTagDefault, [](){
 	return new Sound::Sample(data_path("dot.wav"));
@@ -137,7 +138,8 @@ std::vector< std::vector< std::string > > choices = { //corresponding to the voi
 };
 
 
-GameMode::GameMode() {
+//init idea for mt from http://www.cplusplus.com/reference/random/mersenne_twister_engine/mersenne_twister_engine/
+GameMode::GameMode() : mt(uint32_t(std::chrono::system_clock::now().time_since_epoch().count())) {
 	//----------------
 	//set up scene that holds player + camera (all other objects are in the loaded scene):
 
@@ -155,7 +157,7 @@ GameMode::GameMode() {
 
 	for (auto object : phone_bank_scene_phones) {
 		phones.emplace_back();
-		phones.back().index = phones.size() - 1;
+		phones.back().index = uint32_t(phones.size()) - 1;
 		phones.back().object = object;
 	}
 }
@@ -249,7 +251,10 @@ void GameMode::activate_phone() {
 		} else {
 			//need to go to another phone
 			Task task;
-			task.phone = mt() % v.task.size();
+			task.phone = mt() % (v.task.size()-1);
+			if (task.phone == close_phone->index) {
+				task.phone += 1;
+			}
 			task.say = mt() % v.say[task.phone].size();
 
 			close_phone->play_queue.emplace_back(&v.task[task.phone]);
