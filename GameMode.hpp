@@ -13,6 +13,8 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <vector>
+#include <deque>
+#include <random>
 
 struct GameMode : public Mode {
 	GameMode();
@@ -29,8 +31,13 @@ struct GameMode : public Mode {
 	//draw is called after update:
 	virtual void draw(glm::uvec2 const &drawable_size) override;
 
-	//starts up a 'quit/resume' pause menu:
-	void show_pause_menu();
+	//show voice line from phone or bring up calling menu:
+	void activate_phone();
+
+	uint32_t merits = 0;
+	uint32_t demerits = 0;
+	void add_merit();
+	void add_demerit();
 
 	struct {
 		bool forward = false;
@@ -49,9 +56,23 @@ struct GameMode : public Mode {
 
 	struct Phone {
 		Scene::Object *object = nullptr;
+		uint32_t index = 0;
 		float ring_time = 0.0f;
 		std::shared_ptr< Sound::PlayingSample > ring_loop;
+
+		std::deque< Sound::Sample const * > play_queue; //used to assemble voice clips and such.
+		std::shared_ptr< Sound::PlayingSample > playing;
 	};
+
+	struct Task {
+		uint32_t phone = 0;
+		uint32_t say = 0;
+		bool operator==(Task const &o) {
+			return phone == o.phone && say == o.say;
+		}
+	};
+
+	std::vector< Task > tasks;
 
 	std::vector< Phone > phones;
 	Phone *close_phone = nullptr;
@@ -60,4 +81,6 @@ struct GameMode : public Mode {
 	Scene::Camera *camera = nullptr;
 
 	float task_timer = 5.0f;
+
+	std::mt19937 mt;
 };

@@ -19,6 +19,7 @@
 #include <map>
 #include <cstddef>
 #include <random>
+#include <algorithm>
 
 Load< Sound::Sample > sample_dot(LoadTagDefault, [](){
 	return new Sound::Sample(data_path("dot.wav"));
@@ -63,9 +64,78 @@ Load< Scene > phone_bank_scene(LoadTagDefault, [](){
 			phone_bank_scene_phones.emplace_back(object);
 		}
 	});
+
 	std::cout << "Scene has " << phone_bank_scene_phones.size() << " phones." << std::endl;
+
+	assert(phone_bank_scene_phones.size() == 4);
+
+	//sort phones by name so they end up in the same order [Black, Cyan, Magenta, White] regardless of storage order:
+	std::sort(phone_bank_scene_phones.begin(), phone_bank_scene_phones.end(), [](Scene::Object *a,  Scene::Object *b){
+		return a->transform->name < b->transform->name;
+	});
+	//Shuffle phones so they are in White, Black, Cyan, Magenta order (that's the sample order):
+	std::swap(phone_bank_scene_phones[0], phone_bank_scene_phones[3]);
+	std::swap(phone_bank_scene_phones[1], phone_bank_scene_phones[3]);
+	std::swap(phone_bank_scene_phones[2], phone_bank_scene_phones[3]);
+	assert(phone_bank_scene_phones[0]->transform->name == "Phone.White");
+	assert(phone_bank_scene_phones[1]->transform->name == "Phone.Black");
+	assert(phone_bank_scene_phones[2]->transform->name == "Phone.Cyan");
+	assert(phone_bank_scene_phones[3]->transform->name == "Phone.Magenta");
+
 	return ret;
 });
+
+struct Voice {
+	std::vector< Sound::Sample > check;
+	std::vector< Sound::Sample > task; //one per phone
+	std::vector< std::vector< Sound::Sample > > say; //four per phone
+};
+
+std::vector< Voice > voices;
+
+
+struct Ring {
+	Ring(std::string const &n) :
+		basic(data_path("samples/ring-" + n + ".wav")),
+		strong(data_path("samples/ring-" + n + "-strong.wav")),
+		end(data_path("samples/ring-" + n + "-end.wav")),
+		click(data_path("samples/click-" + n + ".wav"))
+	{ }
+	Sound::Sample basic, strong, end, click;
+};
+
+std::vector< Ring > rings;
+
+Load< int > load_samples(LoadTagDefault, []() -> int const *{
+	voices.reserve(3);
+	for (std::string v : {"A", "B", "C"}) {
+		voices.emplace_back();
+		voices.back().check.reserve(2);
+		voices.back().check.emplace_back(data_path("samples/" + v + "-check-1.wav"));
+		voices.back().check.emplace_back(data_path("samples/" + v + "-check-2.wav"));
+		voices.back().task.reserve(2);
+		for (uint32_t i = 0; i < 4; ++i) {
+			voices.back().task.emplace_back(data_path("samples/" + v + "-task-" + std::to_string(i+1) + ".wav"));
+		}
+		voices.back().say.resize(4);
+		for (uint32_t i = 0; i < 16; ++i) {
+			voices.back().say[i/4].emplace_back(data_path("samples/" + v + "-say-" + std::to_string(i+1) + ".wav"));
+		}
+	}
+	rings.reserve(4);
+	for (uint32_t i = 0; i < 4; ++i) {
+		rings.emplace_back(std::to_string(i+1));
+	}
+	return new int;
+});
+
+std::vector< std::vector< std::string > > choices = { //corresponding to the voice 'say' clips
+	{"CATFISH", "PERCH", "BASS", "SALMON"},
+	{"BENCH", "CHAIR", "DESK", "TABLE"},
+	{"OAK", "MAPLE", "GINGKO", "SPRUCE"},
+	{"KALE", "ROMAINE", "CABBAGE", "SPINACH"}
+};
+
 
 GameMode::GameMode() {
 	//----------------
@@ -85,6 +155,7 @@ GameMode::GameMode() {
 
 	for (auto object : phone_bank_scene_phones) {
 		phones.emplace_back();
+		phones.back().index = phones.size() - 1;
 		phones.back().object = object;
 	}
 }
@@ -151,20 +222,114 @@ bool GameMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 
 			return true;
 		}
+		if (evt.type == SDL_MOUSEBUTTONDOWN) {
+			activate_phone();
+			return true;
+		}
 	}
 	return false;
 }
 
-void GameMode::update(float elapsed) {
-	static std::mt19937 mt(0x91827364);
+void GameMode::activate_phone() {
+	if (!close_phone) return;
+	if (close_phone->ring_time > 0.0f) {
+		close_phone->ring_time = 0.0f;
+		if (close_phone->ring_loop) {
+			close_phone->ring_loop->stop();
+			close_phone->ring_loop.reset();
+		}
+		close_phone->play_queue.emplace_back(&rings[close_phone->index].click);
+		//pick a task:
+		Voice const &v = voices[mt() % voices.size()];
+		if (mt() < mt.max() / 2) {
+			//this was it:
+			close_phone->play_queue.emplace_back(&v.check[mt() % v.check.size()]);
 
+			add_merit();
+		} else {
+			//need to go to another phone
+			Task task;
+			task.phone = mt() % v.task.size();
+			task.say = mt() % v.say[task.phone].size();
+
+			close_phone->play_queue.emplace_back(&v.task[task.phone]);
+			close_phone->play_queue.emplace_back(&v.say[task.phone][task.say]);
+
+			tasks.emplace_back(task);
+		}
+		close_phone->play_queue.emplace_back(&rings[close_phone->index].click);
+	} else {
+		close_phone->play_queue.emplace_back(&rings[close_phone->index].click);
+
+		std::shared_ptr< MenuMode > menu = std::make_shared< MenuMode >();
+
+		menu->on_escape = [this](){
+			Mode::set_current(shared_from_this());
+		};
+		menu->choices.emplace_back(close_phone->object->transform->name.substr(6) + " PHONE");
+		menu->choices.emplace_back("HANG UP", [this](){
+			Mode::set_current(shared_from_this());
+		});
+		for (uint32_t i = 0; i < choices[close_phone->index].size(); ++i) {
+			Task t;
+			t.phone = close_phone->index;
+			t.say = i;
+			menu->choices.emplace_back("SAY " + choices[close_phone->index][i], [this,t](){
+				Mode::set_current(shared_from_this());
+				auto f = std::find(tasks.begin(), tasks.end(), t);
+				if (f != tasks.end()) {
+					tasks.erase(f);
+					add_merit();
+				} else {
+					add_demerit();
+				}
+			});
+		}
+		menu->selected = 1;
+
+
+		menu->background = shared_from_this();
+
+		Mode::set_current(menu);
+	}
+}
+
+void GameMode::add_merit() {
+	merits += 1;
+
+	if (merits >= 10) {
+		std::shared_ptr< MenuMode > menu = std::make_shared< MenuMode >();
+		menu->choices.emplace_back("YOU WIN");
+		menu->choices.emplace_back("EXIT", [](){
+			Mode::set_current(nullptr);
+		});
+		menu->selected = 1;
+		Mode::set_current(menu);
+	}
+}
+
+void GameMode::add_demerit() {
+	demerits += 1;
+
+	if (demerits >= 3) {
+		std::shared_ptr< MenuMode > menu = std::make_shared< MenuMode >();
+		menu->choices.emplace_back("YOU LOSE");
+		menu->choices.emplace_back("EXIT", [](){
+			Mode::set_current(nullptr);
+		});
+		menu->selected = 1;
+		Mode::set_current(menu);
+	}
+}
+
+void GameMode::update(float elapsed) {
 	//task spawning:
 	task_timer -= elapsed;
 	if (task_timer <= 0.0f) {
 		//launch a new task:
 		Phone &p = phones[mt() % phones.size()];
-		if (p.ring_time >= 0.0f) {
-			p.ring_time = 7.0f + mt() / float(mt.max()) * 3.0f;
+		if (p.ring_time <= 0.0f && p.play_queue.empty()) {
+			p.ring_time = 10.0f + mt() / float(mt.max()) * 3.0f;
 		}
 
 		//reset spawn time:
@@ -229,21 +394,33 @@ void GameMode::update(float elapsed) {
 		Sound::listener.set_right( glm::normalize(cam_to_world[0]) );
 	}
 
-	//set ring positions / stop rings:
+	//update phone sounds:
 	for (auto &p : phones) {
+		glm::vec3 at = p.object->transform->make_local_to_world()[3];
 		if (p.ring_time > 0.0f) {
 			if (!p.ring_loop) {
-				p.ring_loop = sample_dot->play(p.object->transform->make_local_to_world()[3], 1.0f, Sound::Loop);
+				p.ring_loop = rings[p.index].basic.play(at, 1.0f, Sound::Loop);
 			}
 			p.ring_time -= elapsed;
-			if (p.ring_time <= 0.0f) {
-				if (p.ring_loop) {
-					p.ring_loop->stop();
-					p.ring_loop.reset();
-				}
-				p.ring_time = 0.0f;
-				//TODO: add demerit
+			if (p.ring_time <= 4.0f && &p.ring_loop->data != &rings[p.index].strong.data) {
+				p.ring_loop->stop();
+				p.ring_loop = rings[p.index].strong.play(at, 1.0f, Sound::Loop);
 			}
+			if (p.ring_time <= 0.0f) {
+				p.ring_loop->stop();
+				p.ring_loop.reset();
+
+				p.ring_time = 0.0f;
+
+				rings[p.index].end.play(at, 1.0f, Sound::Once);
+
+				add_demerit();
+			}
+		}
+		if (p.playing && p.playing->stopped) p.playing.reset();
+		if (!p.playing && !p.play_queue.empty()) {
+			p.playing = p.play_queue.front()->play(at, 1.0f, Sound::Once);
+			p.play_queue.pop_front();
 		}
 	}
 }
@@ -269,6 +446,29 @@ void GameMode::draw(glm::uvec2 const &drawable_size) {
 	scene.draw(camera);
 
 	phone_bank_scene->draw(camera); //will this work?
+
+	glUseProgram(0);
+
+	glDisable(GL_DEPTH_TEST);
+	{ //score messages:
+		std::string message1 = "MERITS: ";
+		for (uint32_t i = 0; i < 10; ++i) {
+			if (i < merits) message1 += '*';
+			else message1 += '.';
+		}
+		std::string message2 = "DEMERITS: ";
+		for (uint32_t i = 0; i < 3; ++i) {
+			if (i < demerits) message2 += 'X';
+			else message2 += '.';
+		}
+		float height = 0.06f;
+		//float width = text_width(message, height);
+		float aspect = drawable_size.x / float(drawable_size.y);
+		draw_text(message1, glm::vec2(-aspect, 0.99f-height), height, glm::vec4(0.0f, 0.0f, 0.0f, 0.5f));
+		draw_text(message1, glm::vec2(-aspect, 1.0f-height), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+		draw_text(message2, glm::vec2(-aspect, 0.99f-2.1f*height), height, glm::vec4(0.0f, 0.0f, 0.0f, 0.5f));
+		draw_text(message2, glm::vec2(-aspect, 1.0f-2.1f*height), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+	}
 
 	if (Mode::current.get() == this) {
 		glDisable(GL_DEPTH_TEST);
@@ -303,29 +503,7 @@ void GameMode::draw(glm::uvec2 const &drawable_size) {
 				draw_text(message, glm::vec2(-0.5f * width,-height), height, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
 			}
 		}
-
-		glUseProgram(0);
 	}
 
 	GL_ERRORS();
-}
-
-
-void GameMode::show_pause_menu() {
-	std::shared_ptr< MenuMode > menu = std::make_shared< MenuMode >();
-
-	std::shared_ptr< Mode > game = shared_from_this();
-	menu->background = game;
-
-	menu->choices.emplace_back("PAUSED");
-	menu->choices.emplace_back("RESUME", [game](){
-		Mode::set_current(game);
-	});
-	menu->choices.emplace_back("QUIT", [](){
-		Mode::set_current(nullptr);
-	});
-
-	menu->selected = 1;
-
-	Mode::set_current(menu);
 }

@@ -4,6 +4,7 @@
 #include "compile_program.hpp"
 #include "MeshBuffer.hpp"
 #include "data_path.hpp"
+#include "gl_errors.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 #include <cmath>
@@ -75,7 +76,11 @@ Load< GLuint > fade_program(LoadTagInit, [](){
 bool MenuMode::handle_event(SDL_Event const &e, glm::uvec2 const &window_size) {
 	if (e.type == SDL_KEYDOWN) {
 		if (e.key.keysym.sym == SDLK_ESCAPE) {
-			Mode::set_current(nullptr);
+			if (!on_escape) {
+				Mode::set_current(nullptr);
+			} else {
+				on_escape();
+			}
 			return true;
 		} else if (e.key.keysym.sym == SDLK_UP) {
 			//find previous selectable thing that isn't selected:
@@ -122,6 +127,7 @@ void MenuMode::draw(glm::uvec2 const &drawable_size) {
 			glBlendEquation(GL_FUNC_ADD);
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 			glUseProgram(*fade_program);
+			glBindVertexArray(*menu_binding); //just have some vao bound
 			glUniform4fv(fade_program_color, 1, glm::value_ptr(glm::vec4(0.0f, 0.0f, 0.0f, background_fade)));
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			glUseProgram(0);
@@ -212,4 +218,6 @@ void MenuMode::draw(glm::uvec2 const &drawable_size) {
 	}
 
 	glEnable(GL_DEPTH_TEST);
+
+	GL_ERRORS();
 }
