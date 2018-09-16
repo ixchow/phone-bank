@@ -1,11 +1,10 @@
 # Game Information
-(Note: fill in this portion with information about your game.)
 
-Title: (TODO: your game's title)
+Title: Another Infinite Night at the Orbital Phone Bank
 
-Author: (TODO: your name)
+Author: Jim McCann
 
-Design Document: [TODO: name of design document](TODO: link to design document)
+Design Document: [Another Infinite Night at the Oribital Phone Bank](http://graphics.cs.cmu.edu/courses/15-466-f18/game1-designs/default/)
 
 Screen Shot:
 
@@ -13,15 +12,22 @@ Screen Shot:
 
 How To Play:
 
-TODO: describe the controls and (if needed) goals/strategy.
+Click on the window to grab mouse, press escape to release mouse.
+
+Use mouse to look, WASD to move, click to activate phones.
+When a phone is activated use the arrow keys and enter to select an action.
 
 Changes From The Design Document:
 
-TODO: what did you need to add/remove/modify from the original design? Why?
+There are three phones on the main platform in the original design document's picture, but only two in the model, so I ended up using just two. I also did some additional modelling to improve the appearance of the world.
 
 Good / Bad / Ugly Code:
 
-TODO: provide examples of code you wrote from this project that you think is good (elegant, simple, useful), bad (hack-y, brittle, unreadable), and ugly (particularly inelegant). Provide a sentence or two of justification for the examples.
+Good -- I think the walk mesh loading code worked out well, though multiple meshes is perhaps overkill. The actual walk mesh walking code also seems to work nicely.
+
+Bad -- the assumption of exactly four phones of specific names permeates the code. Would probably be better to think about how the phone names and sound clips could have been defined through data and loaded.
+
+Ugly -- the manual swapping to get the phone pointers into the same order as the phone-naming clips is brittle and wouldn't be needed if I had a proper way of loading metadata about the sound clips.
 
 # Using This Base Code
 
