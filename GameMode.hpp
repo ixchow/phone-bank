@@ -80,6 +80,8 @@ struct GameMode : public Mode {
 	Scene scene;
 	Scene::Camera *camera = nullptr;
 
+	std::shared_ptr< Sound::PlayingSample > bgm_loop;
+
 	float task_timer = 5.0f;
 
 	std::mt19937 mt;

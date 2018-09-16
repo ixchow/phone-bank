@@ -22,11 +22,8 @@
 #include <algorithm>
 #include <chrono>
 
-Load< Sound::Sample > sample_dot(LoadTagDefault, [](){
-	return new Sound::Sample(data_path("dot.wav"));
-});
-Load< Sound::Sample > sample_loop(LoadTagDefault, [](){
-	return new Sound::Sample(data_path("loop.wav"));
+Load< Sound::Sample > sample_bgm(LoadTagDefault, [](){
+	return new Sound::Sample(data_path("samples/bgm.wav"));
 });
 
 Load< MeshBuffer > phone_bank_meshes(LoadTagDefault, [](){
@@ -160,9 +157,15 @@ GameMode::GameMode() : mt(uint32_t(std::chrono::system_clock::now().time_since_e
 		phones.back().index = uint32_t(phones.size()) - 1;
 		phones.back().object = object;
 	}
+
+	//start background music:
+	bgm_loop = sample_bgm->play(camera->transform->make_local_to_world()[3], 0.0f, Sound::Loop);
+	bgm_loop->set_volume(0.5f, 1.0f); //fade in the bgm
 }
 
 GameMode::~GameMode() {
+	bgm_loop->stop(0.5f); //fade out bgm
+	bgm_loop.reset();
 }
 
 bool GameMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
@@ -394,9 +397,12 @@ void GameMode::update(float elapsed) {
 
 	{ //set sound positions:
 		glm::mat4 cam_to_world = camera->transform->make_local_to_world();
+		Sound::lock();
 		Sound::listener.set_position( cam_to_world[3] );
+		bgm_loop->set_position( cam_to_world[3] );
 		//camera looks down -z, so right is +x:
 		Sound::listener.set_right( glm::normalize(cam_to_world[0]) );
+		Sound::unlock();
 	}
 
 	//update phone sounds:
